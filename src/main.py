@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Accumulate gradients this many steps (effective batch = batch_size * this)")
     p.add_argument("--use_amp", action="store_true", help="Use mixed precision (AMP) to reduce GPU memory")
     p.add_argument("--use_gradient_checkpointing", action="store_true", help="Recompute activations in backward to save GPU memory (slower)")
+    p.add_argument("--memory_saver", action="store_true", help="Enable AMP + gradient checkpointing (recommended for 24GB GPUs with batch_size 16)")
     p.add_argument("--no_staged_training", action="store_true", help="Disable staged training (train full loss all epochs)")
     p.add_argument("--phase1_frac", type=float, default=0.2, help="Fraction of epochs for Phase 1 (VQ only)")
     p.add_argument("--phase2_frac", type=float, default=0.6, help="Fraction of epochs for Phase 2 (full)")
@@ -73,8 +74,8 @@ def main() -> None:
         lambda_transform=args.lambda_transform,
         grad_clip=args.grad_clip if args.grad_clip > 0 else None,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
-        use_amp=args.use_amp,
-        use_gradient_checkpointing=args.use_gradient_checkpointing,
+        use_amp=args.use_amp or args.memory_saver,
+        use_gradient_checkpointing=args.use_gradient_checkpointing or args.memory_saver,
         use_staged_training=not args.no_staged_training,
         phase1_frac=args.phase1_frac,
         phase2_frac=args.phase2_frac,

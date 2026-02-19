@@ -203,9 +203,15 @@ def train_step(
     # target: (B*N, 1, 64, 64)
 
     use_ckpt = config.use_gradient_checkpointing
+    lam_mid = config.lambda_machine_id if lambda_machine_id is None else lambda_machine_id
+    lam_tr = config.lambda_transform if lambda_transform is None else lambda_transform
+    semantic_heads_active = (lam_mid > 0 or lam_tr > 0)
+    # Fix 1: Always checkpoint encoder when semantic heads are active (highest memory impact)
+    use_encoder_ckpt = use_ckpt or semantic_heads_active
+
     with torch.amp.autocast("cuda", enabled=use_amp):  # type: ignore[attr-defined]
         # Encode -> continuous latent (checkpointing saves activation memory)
-        if use_ckpt:
+        if use_encoder_ckpt:
             latent_continuous = cast(
                 torch.Tensor,
                 grad_checkpoint(encoder, flat_patches, use_reentrant=False),
@@ -213,22 +219,23 @@ def train_step(
         else:
             latent_continuous = encoder(flat_patches)
 
-        # Quantize -> quantized latent + VQ loss
+        # Fix 2: Decoder path detached so recon_loss does not backprop to encoder; commitment + semantic heads keep full graph.
+        # quantizer(latent_continuous) keeps commitment loss gradient to encoder; decoder(quantized.detach()) trains decoder only.
         quantized, vq_loss, perplexity = quantizer(latent_continuous)
         vq_warmup = _commitment_warmup_factor(epoch, total_epochs, config)
         vq_loss = vq_loss * vq_warmup
 
-        # Decode -> reconstruction (checkpointing saves activation memory)
+        # Decode from detached quantized: no decoder→encoder grad; saves memory and trains decoder only for recon
         if use_ckpt:
             recon = cast(
                 torch.Tensor,
-                grad_checkpoint(decoder, quantized, use_reentrant=False),
+                grad_checkpoint(decoder, quantized.detach(), use_reentrant=False),
             )
         else:
-            recon = decoder(quantized)
+            recon = decoder(quantized.detach())
         recon_loss = F.mse_loss(recon, target)
 
-        # Semantic heads: machine_id always from aggregated latent (one label per spectrogram)
+        # Semantic heads: full graph encoder -> latent_continuous -> aggregate -> heads (gradients to encoder)
         latent_agg = aggregate_latents_per_sample(latent_continuous, config.n_patches)
         machine_logits, _ = semantic_heads(latent_agg)
         ce_machine = F.cross_entropy(machine_logits, machine_id, label_smoothing=0.1)
@@ -241,8 +248,6 @@ def train_step(
             _, transform_logits = semantic_heads(latent_agg)
             ce_transform = F.cross_entropy(transform_logits, transformation_id, label_smoothing=0.1)
 
-        lam_mid = config.lambda_machine_id if lambda_machine_id is None else lambda_machine_id
-        lam_tr = config.lambda_transform if lambda_transform is None else lambda_transform
         total, loss_dict = compute_combined_loss(
             recon_loss,
             vq_loss,
