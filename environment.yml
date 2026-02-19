@@ -9,5 +9,5 @@ dependencies:
   - scikit-learn
   - pytest
   - pytorch
-  - pytorch-cuda=12.8
+  - pytorch-cuda=12.4
   - pip

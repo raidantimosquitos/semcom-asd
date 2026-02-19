@@ -9,7 +9,7 @@ class VectorQuantizerEMA(nn.Module):
     Expects encoder output in (-5, 5) (encoder uses tanh scaling); codebook is clamped to [-5, 5].
     """
 
-    def __init__(self, num_embeddings: int, embedding_dim: int, commitment_cost: float, decay: float = 0.90, epsilon: float = 1e-5):
+    def __init__(self, num_embeddings: int, embedding_dim: int, commitment_cost: float, decay: float = 0.99, epsilon: float = 1e-5):
         super(VectorQuantizerEMA, self).__init__()
         self._embedding_dim = embedding_dim
         self._num_embeddings = num_embeddings
